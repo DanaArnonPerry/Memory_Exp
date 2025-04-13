@@ -1,14 +1,13 @@
-# Memory Experiment Streamlit App
+# Memory Experiment App
 
-This is a cognitive psychology memory experiment built with Streamlit.
+This is a Streamlit-based application for a visual memory experiment.
 
-## How to run locally
+## To run locally:
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run MemoryExp.py
 ```
 
-## Files
-- `MemoryTest.csv`: experiment data
-- `images/`: visual chart stimuli
-- `app.py`: main Streamlit app
+## Files:
+- `MemoryExp.py`: Main Streamlit app
+- `requirements.txt`: Dependencies

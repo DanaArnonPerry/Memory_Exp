@@ -71,7 +71,7 @@ if "display_start_time" not in st.session_state:
 
 if st.session_state.stage == "welcome":
     show_rtl_text("שלום וברוכ/ה הבא/ה לניסוי בזיכרון חזותי!", "h2")
-    show_rtl_text("הניסוי יתבצע בשני חלקים... יופיעו 12 גרפים... לאחר מכן 3 שאלות אמריקאיות.")
+    show_rtl_text("הניסוי יתבצע בשני חלקים, החלק הראשון יתבצע כעת והחלק השני יתבצע בעוד שעתיים. בחלק הראשון יוצגו 12 גרפים שעוסקים בנושאים שונים, כל גרף יוצג למשך חצי דקה ולאחריו תתבקש להעריך באיזו מידה תזכור את הנתונים לאחר שעתיים. בחלק השני יוצגו שאלות אמריקאיות שמתייחסות לגרפים שראית.")
     if st.button("המשך"):
         log_event("לחצן המשך - מסך פתיחה")
         st.session_state.stage = "context"
@@ -82,6 +82,7 @@ elif st.session_state.stage == "context":
     st.session_state.current_row = row.to_dict()
     show_rtl_text("הקשר לגרף שיוצג:")
     show_rtl_text(row.get("TheContext", ""))
+    show_rtl_text("להתחלת הניסוי לחץ 'המשך'")
     if st.button("המשך"):
         log_event("לחצן המשך - הצגת הקשר", row['ChartNumber'])
         st.session_state.stage = "image"
@@ -90,8 +91,12 @@ elif st.session_state.stage == "context":
 
 elif st.session_state.stage == "image":
     row = st.session_state.current_row
+    
+    # הגדרת זמן התצוגה - שנה זה ל-1 לפיתוח ול-30 לניסוי האמיתי
+    DISPLAY_TIME = 1  # זמן תצוגה בשניות (שנה ל-30 לניסוי האמיתי)
+    
     elapsed_time = time.time() - st.session_state.display_start_time
-    remaining_time = max(0, 30 - int(elapsed_time))
+    remaining_time = max(0, DISPLAY_TIME - int(elapsed_time))
     
     show_rtl_text(f"הגרף יוצג למשך {remaining_time} שניות נוספות.")
     show_rtl_text(f"גרף מספר: {row['ChartNumber']} | תנאי: {row['Condition']}", "h4")
@@ -104,8 +109,8 @@ elif st.session_state.stage == "image":
         show_rtl_text(f"תמונה לא נמצאה: {image_path}")
         log_event("תמונה חסרה", image_path)
     
-    # אוטומטית למעבר לשלב הבא לאחר 30 שניות
-    if elapsed_time >= 30:
+    # אוטומטית למעבר לשלב הבא לאחר הזמן המוגדר
+    if elapsed_time >= DISPLAY_TIME:
         st.session_state.stage = "eval"
         st.rerun()
     else:
@@ -126,54 +131,18 @@ elif st.session_state.stage == "eval":
                 "Condition": row["Condition"],
                 "MemoryEstimate": memory
             })
-            st.session_state.q_num = 1
-            st.session_state.stage = "questions"
-            st.rerun()
-
-elif st.session_state.stage == "questions":
-    row = st.session_state.current_row
-    qn = st.session_state.q_num
-    question_col = f"Question{qn}Text"
-    
-    # בדיקה שהעמודות קיימות
-    option_cols = [f"Q{qn}OptionA", f"Q{qn}OptionB", f"Q{qn}OptionC", f"Q{qn}OptionD"]
-    if not all(col in row for col in option_cols):
-        st.error(f"חסרות עמודות אפשרויות לשאלה {qn}. אנא בדוק את קובץ ה-CSV.")
-        options = ["חסר", "חסר", "חסר", "חסר"]
-    else:
-        options = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
-
-    with st.form(key=f"form_q{qn}"):
-        show_rtl_text(f"שאלה {qn}", "h3")
-        if question_col in row:
-            show_rtl_text(row[question_col])
-        else:
-            show_rtl_text("שאלה חסרה")
             
-        start_time = time.time()
-        answer = show_question(row.get(question_col, "שאלה חסרה"), options, f"a{qn}_{row['ChartNumber']}")
-        confidence = show_confidence(f"c{qn}_{row['ChartNumber']}")
-        submit = st.form_submit_button("המשך")
-        if submit:
-            rt = round(time.time() - start_time, 2)
-            log_event(f"תשובה לשאלה {qn}", {"answer": answer, "confidence": confidence, "rt": rt})
-            st.session_state.responses[-1].update({
-                f"answer{qn}": answer,
-                f"confidence{qn}": confidence,
-                f"rt{qn}": rt
-            })
-            if qn < 3:
-                st.session_state.q_num += 1
+            # בדיקה אם זה הגרף האחרון
+            if st.session_state.graph_index + 1 >= len(st.session_state.filtered_df):
+                st.session_state.stage = "end"
             else:
                 st.session_state.graph_index += 1
-                if st.session_state.graph_index < len(st.session_state.filtered_df):
-                    st.session_state.stage = "context"
-                else:
-                    st.session_state.stage = "end"
+                st.session_state.stage = "context"
+            
             st.rerun()
 
 elif st.session_state.stage == "end":
-    show_rtl_text("הניסוי הסתיים, תודה על השתתפותך!", "h2")
+    show_rtl_text("שלב א של הניסוי הסתיים, השלב הבא יחל בעוד שעתיים", "h2")
     df_out = pd.DataFrame(st.session_state.responses)
     df_log = pd.DataFrame(st.session_state.log)
     

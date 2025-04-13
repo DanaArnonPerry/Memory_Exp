@@ -143,6 +143,8 @@ elif st.session_state.stage == "eval":
 
 elif st.session_state.stage == "end":
     show_rtl_text("שלב א של הניסוי הסתיים, השלב הבא יחל בעוד שעתיים", "h2")
+    
+    # יצירת הקבצים והכנתם להורדה (מוסתר מהמשתתף)
     df_out = pd.DataFrame(st.session_state.responses)
     df_log = pd.DataFrame(st.session_state.log)
     
@@ -150,5 +152,124 @@ elif st.session_state.stage == "end":
     df_out["variation"] = st.session_state.variation
     df_out["timestamp"] = datetime.now().isoformat()
     
-    st.download_button("הורד תוצאות (CSV)", df_out.to_csv(index=False), "results.csv", "text/csv")
-    st.download_button("הורד לוג מפורט (CSV)", df_log.to_csv(index=False), "log.csv", "text/csv")
+    # שמירה אוטומטית של התוצאות
+    results_dir = "experiment_results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    df_out.to_csv(f"{results_dir}/results_{timestamp}.csv", index=False)
+    df_log.to_csv(f"{results_dir}/log_{timestamp}.csv", index=False)
+    
+    # לחצן להמשך לשלב ב' (ייעלם בהפעלה הסופית)
+    # בדיקה אם זה מצב פיתוח/בדיקות
+    is_dev_mode = st.sidebar.checkbox("מצב פיתוח", key="dev_mode", value=False)
+    if is_dev_mode:
+        if st.button("המשך לשלב ב' (לבדיקות בלבד)"):
+            st.session_state.stage = "part2_start"
+            st.rerun()
+    
+    # שמירת הנתונים למשתמש מיוחד (עם סיסמה או שם משתמש מסוים)
+    if st.sidebar.checkbox("הצג כפתורי הורדה (למנהל מערכת בלבד)", key="admin_checkbox", value=False):
+        admin_password = st.sidebar.text_input("סיסמת מנהל:", type="password", key="admin_password")
+        if admin_password == "admin123":  # שנה לסיסמה שתבחר
+            st.sidebar.download_button("הורד תוצאות (CSV)", df_out.to_csv(index=False), "results.csv", "text/csv")
+            st.sidebar.download_button("הורד לוג מפורט (CSV)", df_log.to_csv(index=False), "log.csv", "text/csv")
+            st.sidebar.success("ברוך הבא, מנהל המערכת!")
+        elif admin_password:
+            st.sidebar.error("סיסמה שגויה")
+            
+# הוספת שלב ב' לבדיקות
+elif st.session_state.stage == "part2_start":
+    show_rtl_text("ברוכים הבאים לשלב ב' של הניסוי!", "h2")
+    show_rtl_text("בשלב זה תתבקש לענות על שאלות הקשורות לגרפים שראית בשלב א'.")
+    
+    if st.button("התחל שלב ב'"):
+        # איפוס משתני שלב ב'
+        st.session_state.part2_graph_index = 0
+        st.session_state.part2_question_index = 0
+        st.session_state.part2_responses = []
+        st.session_state.stage = "part2_questions"
+        st.rerun()
+        
+elif st.session_state.stage == "part2_questions":
+    if st.session_state.part2_graph_index >= len(st.session_state.filtered_df):
+        st.session_state.stage = "part2_end"
+        st.rerun()
+    
+    row = st.session_state.filtered_df.iloc[st.session_state.part2_graph_index]
+    qn = st.session_state.part2_question_index + 1  # שאלות מתחילות מ-1
+    
+    question_col = f"Question{qn}Text"
+    option_cols = [f"Q{qn}OptionA", f"Q{qn}OptionB", f"Q{qn}OptionC", f"Q{qn}OptionD"]
+    
+    if all(col in row for col in option_cols) and question_col in row:
+        options = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
+        
+        with st.form(key=f"part2_form_q{qn}_{row['ChartNumber']}"):
+            show_rtl_text(f"גרף {row['ChartNumber']} - שאלה {qn}", "h3")
+            show_rtl_text(row[question_col])
+            
+            start_time = time.time()
+            answer = show_question(row[question_col], options, f"part2_a{qn}_{row['ChartNumber']}")
+            confidence = show_confidence(f"part2_c{qn}_{row['ChartNumber']}")
+            
+            submit = st.form_submit_button("המשך")
+            if submit:
+                rt = round(time.time() - start_time, 2)
+                log_event(f"תשובה לשאלה {qn} בשלב ב'", {"answer": answer, "confidence": confidence, "rt": rt})
+                
+                # שמירת התשובה
+                st.session_state.part2_responses.append({
+                    "ChartNumber": row["ChartNumber"],
+                    "Condition": row["Condition"],
+                    f"question{qn}": row[question_col],
+                    f"answer{qn}": answer,
+                    f"confidence{qn}": confidence,
+                    f"rt{qn}": rt
+                })
+                
+                # מעבר לשאלה הבאה או לגרף הבא
+                st.session_state.part2_question_index += 1
+                if st.session_state.part2_question_index >= 3:  # 3 שאלות לכל גרף
+                    st.session_state.part2_graph_index += 1
+                    st.session_state.part2_question_index = 0
+                
+                st.rerun()
+    else:
+        st.error(f"חסרים נתונים לשאלה {qn} בגרף {row['ChartNumber']}. בדוק את קובץ ה-CSV.")
+        if st.button("דלג לשאלה הבאה"):
+            st.session_state.part2_question_index += 1
+            if st.session_state.part2_question_index >= 3:
+                st.session_state.part2_graph_index += 1
+                st.session_state.part2_question_index = 0
+            st.rerun()
+
+elif st.session_state.stage == "part2_end":
+    show_rtl_text("הניסוי הסתיים, תודה על השתתפותך!", "h2")
+    
+    # יצירת הקבצים והכנתם להורדה (מוסתר מהמשתתף)
+    if "part2_responses" in st.session_state:
+        df_part2 = pd.DataFrame(st.session_state.part2_responses)
+        df_log = pd.DataFrame(st.session_state.log)
+        
+        # הוספת מידע נוסף לקובץ התוצאות
+        df_part2["variation"] = st.session_state.variation
+        df_part2["timestamp"] = datetime.now().isoformat()
+        
+        # שמירה אוטומטית של התוצאות
+        results_dir = "experiment_results"
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        df_part2.to_csv(f"{results_dir}/results_part2_{timestamp}.csv", index=False)
+        df_log.to_csv(f"{results_dir}/log_part2_{timestamp}.csv", index=False)
+        
+        # כפתורי הורדה למנהל מערכת
+        if st.sidebar.checkbox("הצג כפתורי הורדה (למנהל מערכת בלבד)", key="admin_part2", value=False):
+            admin_password = st.sidebar.text_input("סיסמת מנהל:", type="password", key="admin_password_part2")
+            if admin_password == "admin123":
+                st.sidebar.download_button("הורד תוצאות שלב ב' (CSV)", df_part2.to_csv(index=False), "results_part2.csv", "text/csv")
+                st.sidebar.download_button("הורד לוג מפורט (CSV)", df_log.to_csv(index=False), "log_part2.csv", "text/csv")
+                st.sidebar.success("ברוך הבא, מנהל המערכת!")

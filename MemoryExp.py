@@ -34,7 +34,6 @@ def show_rtl_text(text, tag="p", size="18px"):
     st.markdown(f"<{tag} style='direction: rtl; text-align: right; font-size:{size};'>{text}</{tag}>", unsafe_allow_html=True)
 
 def show_question(question, options, key_prefix):
-    show_rtl_text(question)
     return st.radio("", options, key=key_prefix, index=None, format_func=lambda x: f"{chr(65 + options.index(x))}. {x}", label_visibility="collapsed")
 
 def show_confidence(key, scale=5):

@@ -266,7 +266,7 @@ if st.session_state.stage == "welcome":
     if st.session_state.group == "G1":
         show_rtl_text("בתנאי זה יוצג תחילה הקשר, לאחר מכן גרף ל-5 שניות, ואז שתי שאלות (כל אחת עד 2 דקות).")
     elif st.session_state.group == "G2":
-        show_rtl_text("בתנאי זה יוצג הקשר ולאחריו שלוש שאלות על הגרף — ללא הצגת הגרף עצמו.")
+        show_rtl_text("בתנאי זה יוצג הקשר, יוצג הגרף ל‑5 שניות, ולאחר מכן שלוש שאלות — ללא הצגת הגרף.")
     else:
         show_rtl_text("בתנאי זה כל הגרפים יוצגו ל-5 שניות כל אחד, לאחר כל גרף שאלה להערכת זכירה; לבסוף, תענו על כל 36 השאלות (3 לכל גרף) ללא הצגת הגרפים.")
 
@@ -353,16 +353,34 @@ elif st.session_state.group == "G1":
 elif st.session_state.group == "G2":
     row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
 
+    # הקשר > גרף (5ש') > שאלות ללא הגרף (Q1..Q3)
     if st.session_state.stage == "context":
         show_group_badge()
         st.session_state.question_index = 0
-        show_rtl_text("הקשר לשאלות הבאות:", "h3")
+        show_rtl_text("הקשר לגרף הבא:", "h3")
         show_rtl_text(row.get("TheContext", ""))
-        if st.button("המשך לשאלות"):
-            st.session_state.stage = "g2_q"
-            st.session_state.q_start_time = time.time()
+        if st.button("המשך לגרף"):
+            st.session_state.stage = "g2_image"
+            st.session_state.display_start_time = time.time()
             log_event("Show Context (G2)", {"chart": row['ChartNumber']})
             st.rerun()
+
+    elif st.session_state.stage == "g2_image":
+        show_group_badge()
+        elapsed = time.time() - st.session_state.display_start_time
+        remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
+        show_timer_badge(remaining)
+        show_rtl_text(f"גרף #{row['ChartNumber']} | תנאי: {row['Condition']}")
+        if os.path.exists(row['image_path']):
+            st.image(row['image_path'], use_container_width=True)
+        else:
+            st.error(f"תמונה לא נמצאה: {row['image_path']}")
+        if elapsed >= DISPLAY_TIME_GRAPH:
+            st.session_state.stage = "g2_q"
+            st.session_state.q_start_time = time.time()
+            st.rerun()
+        else:
+            tick_and_rerun(1.0)
 
     elif st.session_state.stage == "g2_q":
         show_group_badge()
@@ -377,12 +395,12 @@ elif st.session_state.group == "G2":
             show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
             show_rtl_text(qtxt)
             answer = show_question(opts, f"g2_a{qn}_{row['ChartNumber']}")
-            confidence = show_confidence(f"g2_c{qn}_{row['ChartNumber']}")
             submitted = st.form_submit_button("המשך")
 
         if submitted or elapsed >= QUESTION_MAX_TIME:
             rt = round(elapsed, 2)
-            record_answer(row, qn, answer, confidence, rt)
+            # בקבוצה 2 אין שאלת ביטחון
+            record_answer(row, qn, answer, None, rt)
             log_event(f"Answer Q{qn} (G2)", {"chart": row['ChartNumber'], "rt": rt})
             st.session_state.question_index += 1
             if st.session_state.question_index >= 3:

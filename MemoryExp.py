@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import os
 import random
@@ -23,6 +23,24 @@ st.markdown("""
 
 def show_rtl_text(text, tag="p", size="18px"):
     st.markdown(f"<{tag} style='direction: rtl; text-align: right; font-size:{size};'>{text}</{tag}>", unsafe_allow_html=True)
+
+
+def show_group_badge():
+    """תגית קטנה בראש המסך שמציינת באיזו קבוצה אנו (נוח במצב פיתוח)."""
+    st.markdown(
+        f"<div style='direction:rtl;text-align:right;padding:6px 10px;border-radius:12px;display:inline-block;background:#F1F5F9;border:1px solid #E2E8F0;margin-bottom:8px;'>" \
+        f"קבוצה: <b>{st.session_state.get('group','?')}</b></div>",
+        unsafe_allow_html=True
+    )
+
+
+def tick_and_rerun(delay: float = 1.0):
+    """מונע לולאת rerun צפופה שיכולה לגרום לשגיאת 400 בדפדפן.
+    מחכה מעט ואז מבצע rerun עדין.
+    """
+    time.sleep(max(0.2, float(delay)))
+    st.rerun()
+
 
 @st.cache_data()
 def load_data():
@@ -126,11 +144,17 @@ QUESTION_MAX_TIME = st.sidebar.number_input("זמן מירבי לשאלה (שנ�
 # קבוצות:
 # G1 — הקשר > גרף 5ש׳ > שאלה1 (עד 2 דק׳) > שאלה2 (עד 2 דק׳) , וחוזר לכל גרף
 # G2 — (הקשר) > שלוש שאלות ללא גרף
-# G3 — המלכה: תחילה מציגים את כל הגרפים (5ש׳ + הערכת זכירה), ואז לאחר שסיימנו את כולם—36 שאלות (3 לכל גרף)
+# G3 — תחילה מציגים את כל הגרפים (5ש׳ + הערכת זכירה), ואז לאחר שסיימנו את כולם—36 שאלות (3 לכל גרף)
 
 if "group" not in st.session_state:
-    # ברירת מחדל—מוקצה רנדומית למשתתף
-    st.session_state.group = random.choice(["G1","G2","G3"])  # ניתן לשנות להפצה שווה חיצונית
+    # אפשרות לקבע קבוצה דרך פרמטר ב-URL (?group=G1/G2/G3)
+    qp = st.experimental_get_query_params()
+    group_param = qp.get("group", [None])[0]
+    if group_param in ("G1", "G2", "G3"):
+        st.session_state.group = group_param
+    else:
+        # ברירת מחדל—מוקצה רנדומית למשתתף
+        st.session_state.group = random.choice(["G1","G2","G3"])  
     log_event("Assigned Group", st.session_state.group)
 
 # בורר לקבוצה במצב פיתוח
@@ -223,6 +247,7 @@ def record_answer(row, qn, answer, confidence, rt):
 # מסך פתיחה
 ###############################################
 if st.session_state.stage == "welcome":
+    show_group_badge()
     show_rtl_text("שלום וברוכ/ה הבא/ה לניסוי בזיכרון חזותי!", "h2")
     if st.session_state.group == "G1":
         show_rtl_text("בתנאי זה יוצג תחילה הקשר, לאחר מכן גרף ל-5 שניות, ואז שתי שאלות (כל אחת עד 2 דקות).")
@@ -247,6 +272,7 @@ elif st.session_state.group == "G1":
     row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
 
     if st.session_state.stage == "context":
+        show_group_badge()
         st.session_state.question_index = 0
         show_rtl_text("הקשר לגרף הבא:", "h3")
         show_rtl_text(row.get("TheContext", ""))
@@ -257,6 +283,7 @@ elif st.session_state.group == "G1":
             st.rerun()
 
     elif st.session_state.stage == "image":
+        show_group_badge()
         elapsed = time.time() - st.session_state.display_start_time
         remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
         show_rtl_text(f"הגרף יוצג עוד {remaining} שניות", "h4")
@@ -270,10 +297,10 @@ elif st.session_state.group == "G1":
             st.session_state.q_start_time = time.time()
             st.rerun()
         else:
-            st.button("…", disabled=True)
-            st.rerun()
+            tick_and_rerun(1.0)
 
     elif st.session_state.stage in ["q1","q2"]:
+        show_group_badge()
         qn = 1 if st.session_state.stage == "q1" else 2
         qtxt = row[f"Question{qn}Text"]
         opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
@@ -300,8 +327,7 @@ elif st.session_state.group == "G1":
                 save_and_advance_graph()
             st.rerun()
         else:
-            st.button("…", disabled=True)
-            st.rerun()
+            tick_and_rerun(1.0)
 
 ###############################################
 # G2 — הקשר > Q1 > Q2 > Q3 (ללא הצגת הגרף)
@@ -310,6 +336,7 @@ elif st.session_state.group == "G2":
     row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
 
     if st.session_state.stage == "context":
+        show_group_badge()
         st.session_state.question_index = 0
         show_rtl_text("הקשר לשאלות הבאות:", "h3")
         show_rtl_text(row.get("TheContext", ""))
@@ -320,6 +347,7 @@ elif st.session_state.group == "G2":
             st.rerun()
 
     elif st.session_state.stage == "g2_q":
+        show_group_badge()
         qn = st.session_state.question_index + 1  # 1..3
         qtxt = row[f"Question{qn}Text"]
         opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
@@ -346,8 +374,7 @@ elif st.session_state.group == "G2":
                 st.session_state.q_start_time = time.time()
             st.rerun()
         else:
-            st.button("…", disabled=True)
-            st.rerun()
+            tick_and_rerun(1.0)
 
 ###############################################
 # G3 — שלב הצגת כל הגרפים + הערכת זכירה, ואז כל השאלות (36)
@@ -357,6 +384,7 @@ elif st.session_state.group == "G3":
 
     # שלב הצגה + הערכה
     if st.session_state.stage == "g3_show" and st.session_state.phase == "show":
+        show_group_badge()
         show_rtl_text(f"גרף #{row['ChartNumber']} — יוצג {DISPLAY_TIME_GRAPH} שניות", "h3")
         if os.path.exists(row['image_path']):
             st.image(row['image_path'], use_container_width=True)
@@ -375,10 +403,10 @@ elif st.session_state.group == "G3":
             st.session_state.display_start_time = None
             st.rerun()
         else:
-            st.button("…", disabled=True)
-            st.rerun()
+            tick_and_rerun(1.0)
 
     elif st.session_state.stage == "g3_eval" and st.session_state.phase == "show":
+        show_group_badge()
         with st.form(key=f"g3_eval_{row['ChartNumber']}"):
             show_rtl_text("שאלת הערכה: באיזו מידה את/ה חושב/ת שתזכור/י את הנתונים בעוד כשעתיים? (1-5)", "h3")
             memory = st.slider("", 1, 5, step=1, key=f"g3_mem_{row['ChartNumber']}", label_visibility="collapsed")
@@ -399,6 +427,7 @@ elif st.session_state.group == "G3":
 
     # שלב השאלות — לאחר שכל הגרפים הוצגו
     elif st.session_state.stage == "g3_questions" and st.session_state.phase == "questions":
+        show_group_badge()
         qn = st.session_state.question_index + 1
         qtxt = row[f"Question{qn}Text"]
         opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
@@ -432,13 +461,13 @@ elif st.session_state.group == "G3":
                 st.session_state.q_start_time = time.time()
             st.rerun()
         else:
-            st.button("…", disabled=True)
-            st.rerun()
+            tick_and_rerun(1.0)
 
 ###############################################
 # סיום ושמירה
 ###############################################
 if st.session_state.stage == "end":
+    show_group_badge()
     show_rtl_text("הניסוי הסתיים, תודה רבה!", "h2")
 
     df_out = pd.DataFrame(st.session_state.responses)
@@ -468,7 +497,7 @@ if st.session_state.stage == "end":
 
 ###############################################
 # הערות:
-# 1) יש לעדכן את MemoryTest.csv כך שיכלול את כל עמודות השאלות (1-3) והאפשרויות (A-D).
-# 2) ניתן להפעיל מצב פיתוח כדי לשלוט בטיימרים ולדלג בין שלבים/גרפים.
-# 3) הלוג והתוצאות נשמרים אוטומטית בתיקייה experiment_results.
-# 4) ב-G3 נעשה שימוש ב-st.session_state.phase כדי להבדיל בין שלב הצגת גרפים (show) לשלב שאלות (questions).
+# 1) נוספה המתנה לפני rerun (tick_and_rerun) בכל המקומות עם טיימרים כדי למנוע שגיאת 400 עקב ריענון צפוף.
+# 2) נוספה תגית קבוצה בראש המסך (show_group_badge) + תמיכה בבחירת קבוצה ב-URL (?group=G1/G2/G3).
+# 3) ניתן לשלוט בזמני התצוגה/שאלות מה-sidebar במצב פיתוח.
+# 4) הלוג והתוצאות נשמרים אוטומטית בתיקייה experiment_results.

@@ -34,10 +34,18 @@ def show_group_badge():
     )
 
 
+def show_timer_badge(seconds: int):
+    """מציג טיימר ברור למעלה ככל האפשר."""
+    st.markdown(
+        f"<div style='direction:rtl;text-align:right;padding:8px 12px;border-radius:10px;display:inline-block;background:#EEF2FF;border:1px solid #CBD5E1;margin:6px 0;'>"
+        f"⏱️ זמן שנותר: <b>{seconds}</b> שניות" 
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+
 def tick_and_rerun(delay: float = 1.0):
-    """מונע לולאת rerun צפופה שיכולה לגרום לשגיאת 400 בדפדפן.
-    מחכה מעט ואז מבצע rerun עדין.
-    """
+    """מונע לולאת rerun צפופה שיכולה לגרום לשגיאת 400 בדפדפן."""
     time.sleep(max(0.2, float(delay)))
     st.rerun()
 
@@ -148,8 +156,13 @@ QUESTION_MAX_TIME = st.sidebar.number_input("זמן מירבי לשאלה (שנ�
 
 if "group" not in st.session_state:
     # אפשרות לקבע קבוצה דרך פרמטר ב-URL (?group=G1/G2/G3)
-    qp = st.experimental_get_query_params()
-    group_param = qp.get("group", [None])[0]
+    try:
+        qp = st.query_params
+        group_param = qp.get("group", None)
+    except Exception:
+        qp = st.experimental_get_query_params()
+        group_param = qp.get("group", [None])[0]
+
     if group_param in ("G1", "G2", "G3"):
         st.session_state.group = group_param
     else:
@@ -237,10 +250,11 @@ def record_answer(row, qn, answer, confidence, rt):
         "question": int(qn),
         "question_text": row[f"Question{qn}Text"],
         "answer": answer,
-        "confidence": confidence,
         "rt": rt,
         "phase": st.session_state.phase
     }
+    if confidence is not None:
+        payload["confidence"] = confidence
     st.session_state.responses.append(payload)
 
 ###############################################
@@ -266,7 +280,7 @@ if st.session_state.stage == "welcome":
         st.rerun()
 
 ###############################################
-# G1 — הקשר > גרף > Q1 > Q2
+# G1 — הקשר > גרף > Q1 > Q2 (בלי שאלת ביטחון; הגרף מעל השאלה; טיימר בראש)
 ###############################################
 elif st.session_state.group == "G1":
     row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
@@ -286,7 +300,7 @@ elif st.session_state.group == "G1":
         show_group_badge()
         elapsed = time.time() - st.session_state.display_start_time
         remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
-        show_rtl_text(f"הגרף יוצג עוד {remaining} שניות", "h4")
+        show_timer_badge(remaining)
         show_rtl_text(f"גרף #{row['ChartNumber']} | תנאי: {row['Condition']}")
         if os.path.exists(row['image_path']):
             st.image(row['image_path'], use_container_width=True)
@@ -307,18 +321,22 @@ elif st.session_state.group == "G1":
 
         elapsed = time.time() - (st.session_state.q_start_time or time.time())
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
+        show_timer_badge(remaining)
+
+        # הגרף מעל השאלה
+        if os.path.exists(row['image_path']):
+            st.image(row['image_path'], use_container_width=True)
 
         with st.form(key=f"g1_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
             show_rtl_text(qtxt)
             answer = show_question(opts, f"g1_a{qn}_{row['ChartNumber']}")
-            confidence = show_confidence(f"g1_c{qn}_{row['ChartNumber']}")
-            st.info(f"זמן שנותר: {remaining} שניות")
             submitted = st.form_submit_button("המשך")
 
         if submitted or elapsed >= QUESTION_MAX_TIME:
             rt = round(elapsed, 2)
-            record_answer(row, qn, answer, confidence, rt)
+            # ללא שאלה על ביטחון בקבוצה 1
+            record_answer(row, qn, answer, None, rt)
             log_event(f"Answer Q{qn}", {"chart": row['ChartNumber'], "rt": rt})
             if st.session_state.stage == "q1":
                 st.session_state.stage = "q2"
@@ -353,13 +371,13 @@ elif st.session_state.group == "G2":
         opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
         elapsed = time.time() - (st.session_state.q_start_time or time.time())
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
+        show_timer_badge(remaining)
 
         with st.form(key=f"g2_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
             show_rtl_text(qtxt)
             answer = show_question(opts, f"g2_a{qn}_{row['ChartNumber']}")
             confidence = show_confidence(f"g2_c{qn}_{row['ChartNumber']}")
-            st.info(f"זמן שנותר: {remaining} שניות")
             submitted = st.form_submit_button("המשך")
 
         if submitted or elapsed >= QUESTION_MAX_TIME:
@@ -385,6 +403,9 @@ elif st.session_state.group == "G3":
     # שלב הצגה + הערכה
     if st.session_state.stage == "g3_show" and st.session_state.phase == "show":
         show_group_badge()
+        elapsed = 0 if st.session_state.display_start_time is None else time.time() - st.session_state.display_start_time
+        remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
+        show_timer_badge(remaining)
         show_rtl_text(f"גרף #{row['ChartNumber']} — יוצג {DISPLAY_TIME_GRAPH} שניות", "h3")
         if os.path.exists(row['image_path']):
             st.image(row['image_path'], use_container_width=True)
@@ -395,8 +416,6 @@ elif st.session_state.group == "G3":
             st.session_state.display_start_time = time.time()
             log_event("Show Graph (G3)", {"chart": row['ChartNumber']})
         elapsed = time.time() - st.session_state.display_start_time
-        remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
-        st.info(f"זמן שנותר להצגת הגרף: {remaining} שניות")
 
         if elapsed >= DISPLAY_TIME_GRAPH:
             st.session_state.stage = "g3_eval"
@@ -436,13 +455,13 @@ elif st.session_state.group == "G3":
             st.session_state.q_start_time = time.time()
         elapsed = time.time() - st.session_state.q_start_time
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
+        show_timer_badge(remaining)
 
         with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"שאלות סופיות — גרף {row['ChartNumber']} — שאלה {qn}/3", "h3")
             show_rtl_text(qtxt)
             answer = show_question(opts, f"g3_a{qn}_{row['ChartNumber']}")
             confidence = show_confidence(f"g3_c{qn}_{row['ChartNumber']}")
-            st.info(f"זמן שנותר: {remaining} שניות")
             submitted = st.form_submit_button("המשך")
 
         if submitted or elapsed >= QUESTION_MAX_TIME:
@@ -497,7 +516,7 @@ if st.session_state.stage == "end":
 
 ###############################################
 # הערות:
-# 1) נוספה המתנה לפני rerun (tick_and_rerun) בכל המקומות עם טיימרים כדי למנוע שגיאת 400 עקב ריענון צפוף.
-# 2) נוספה תגית קבוצה בראש המסך (show_group_badge) + תמיכה בבחירת קבוצה ב-URL (?group=G1/G2/G3).
-# 3) ניתן לשלוט בזמני התצוגה/שאלות מה-sidebar במצב פיתוח.
-# 4) הלוג והתוצאות נשמרים אוטומטית בתיקייה experiment_results.
+# * בקבוצה 1 הוסרה שאלת הביטחון, והגרף מוצג מעל השאלה. הטיימר מופיע בראש.
+# * נוספה המתנה לפני rerun (tick_and_rerun) בכל המקומות עם טיימרים כדי למנוע שגיאות 400.
+# * תמיכה בפרמטר URL לקביעה מראש של קבוצה (?group=G1/G2/G3).
+# * הלוג והתוצאות נשמרים אוטומטית בתיקייה experiment_results.

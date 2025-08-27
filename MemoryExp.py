@@ -5,7 +5,20 @@ import random
 import time
 from datetime import datetime
 from PIL import Image
-import matplotlib.pyplot as plt
+
+# נסה Altair (מובנה ברוב התקנות של Streamlit); נשתמש בו כברירת מחדל
+try:
+    import altair as alt
+    _HAS_ALT = True
+except Exception:
+    _HAS_ALT = False
+
+# נסה Matplotlib לגיבוי (אם מותקן)
+try:
+    import matplotlib.pyplot as plt
+    _HAS_MPL = True
+except Exception:
+    _HAS_MPL = False
 
 ###############################################
 # הגדרות בסיס
@@ -92,7 +105,6 @@ def load_graph_db():
                 return None
         for col in [c for c in db.columns if c.lower().startswith('values')]:
             db[col] = db[col].apply(_to_num)
-        # המרה של מזהה לגרף למספר שלם אם אפשר
         if 'ID' in db.columns:
             db['ID'] = pd.to_numeric(db['ID'], errors='coerce').astype('Int64')
         return db
@@ -102,7 +114,6 @@ def load_graph_db():
 
 
 def current_graph_id(row_dict):
-    """מאחזר מזהה גרף לפי סדר עדיפויות: GraphID/ChartID/ID/ChartNumber"""
     for key in ("GraphID","ChartID","ID","ChartNumber"):
         val = row_dict.get(key)
         if pd.notna(val):
@@ -123,56 +134,72 @@ def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
 
 
 def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 300):
+    """ציור גרף עמודות מתוך ה-DB. ברירת מחדל Altair; גיבוי Matplotlib/Streamlit."""
     if sub.empty:
         st.warning("לא נמצאו נתונים לגרף המבוקש בקובץ graph_DB.csv")
         return
-    labels = sub['Labels'].astype(str).tolist() if 'Labels' in sub.columns else [str(i) for i in range(len(sub))]
-    has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
-    vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
-    vals_b = sub['ValuesB'].fillna(0).tolist() if has_b else None
-    colors_a = sub['ColorA'].tolist() if 'ColorA' in sub.columns else None
-    colors_b = sub['ColorB'].tolist() if 'ColorB' in sub.columns else None
 
-    n = len(labels)
-    x = range(n)
-    if has_b:
-        width = 0.38
+    # מכינים DataFrame ארוך ל-Altair אם יש שתי סדרות
+    if _HAS_ALT:
+        if 'ValuesB' in sub.columns and sub['ValuesB'].notna().any():
+            df_long = sub[['Labels','ValuesA','ValuesB']].copy()
+            df_long = df_long.melt(id_vars=['Labels'], value_vars=['ValuesA','ValuesB'], var_name='series', value_name='value')
+            chart = alt.Chart(df_long).mark_bar().encode(
+                x=alt.X('Labels:N', sort=None),
+                xOffset='series:N',
+                y=alt.Y('value:Q'),
+                color=alt.Color('series:N', legend=None),
+                tooltip=['Labels','series','value']
+            )
+        else:
+            chart = alt.Chart(sub[['Labels','ValuesA']]).mark_bar().encode(
+                x=alt.X('Labels:N', sort=None),
+                y=alt.Y('ValuesA:Q'),
+                tooltip=['Labels','ValuesA']
+            )
+        if title:
+            chart = chart.properties(title=title)
+        st.altair_chart(chart, use_container_width=True)
+        return
+
+    # גיבוי: Matplotlib אם קיים
+    if _HAS_MPL:
+        labels = sub['Labels'].astype(str).tolist() if 'Labels' in sub.columns else [str(i) for i in range(len(sub))]
+        has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
+        vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
+        vals_b = sub['ValuesB'].fillna(0).tolist() if has_b else None
+        n = len(labels)
+        x = range(n)
+        width = 0.38 if has_b else 0.55
+        fig, ax = plt.subplots(figsize=(min(14, max(8, n*0.8)), height/96))
+        if has_b:
+            ax.bar([i - width/2 for i in x], vals_a, width)
+            ax.bar([i + width/2 for i in x], vals_b, width)
+        else:
+            ax.bar(x, vals_a, width)
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(axis='y', linestyle='--', alpha=0.25)
+        if title:
+            ax.set_title(title, fontsize=14, pad=12)
+        st.pyplot(fig, clear_figure=True)
+        return
+
+    # גיבוי אחרון: st.bar_chart
+    if 'ValuesB' in sub.columns and sub['ValuesB'].notna().any():
+        data = sub[['Labels','ValuesA','ValuesB']].set_index('Labels')
     else:
-        width = 0.55
-
-    fig, ax = plt.subplots(figsize=(min(14, max(8, n*0.8)), height/96))
-    if has_b:
-        ax.bar([i - width/2 for i in x], vals_a, width, color=colors_a)
-        ax.bar([i + width/2 for i in x], vals_b, width, color=colors_b)
-    else:
-        ax.bar(x, vals_a, width, color=colors_a)
-
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.grid(axis='y', linestyle='--', alpha=0.25)
-    if title:
-        ax.set_title(title, fontsize=14, pad=12)
-
-    # אנוטציות מעל עמודות
-    def _annotate(xs, ys):
-        for xi, yi in zip(xs, ys):
-            ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=10)
-    if has_b:
-        _annotate([i - width/2 for i in x], vals_a)
-        _annotate([i + width/2 for i in x], vals_b)
-    else:
-        _annotate(list(x), vals_a)
-
-    st.pyplot(fig, clear_figure=True)
+        data = sub[['Labels','ValuesA']].set_index('Labels')
+    st.bar_chart(data)
 
 
 ###############################################
 # טעינה
 ###############################################
 
-# תיקיית תמונות כבר לא חובה
+# מצב פיתוח
 is_dev_mode = st.sidebar.checkbox("מצב פיתוח", key="dev_mode", value=False)
 
 df = load_memory_test()
@@ -188,7 +215,6 @@ if graph_db.empty:
 ###############################################
 if "variation" not in st.session_state:
     st.session_state.variation = random.choice(["V1","V2","V3","V4"])
-    # אין כאן log_event עדיין כי stage לא מאותחל
 
 if "filtered_df" not in st.session_state:
     st.session_state.filtered_df = df[df[st.session_state.variation] == 1].reset_index(drop=True)
@@ -560,7 +586,7 @@ if st.session_state.stage == "end":
 
 ###############################################
 # הערות:
-# * מעבר לשימוש בגרפים מתוך graph_DB.csv לפי עמודת ID (תמיכה גם ב-GraphID/ChartID/ID/ChartNumber ממסך השאלות).
-# * בקבוצה 1 הגרף מוצג גם מעל השאלות; בקבוצה 2 הגרף מוצג רק לפני השאלות; בקבוצה 3 רק בשלב ההצגה.
+# * ברירת מחדל ליצירת גרפים ב-Altair (ללא צורך בהתקנת matplotlib). אם Altair לא זמין — נעשה גיבוי ל-matplotlib ואם גם הוא לא זמין נשתמש ב-st.bar_chart.
+# * שימוש בגרפים מתוך graph_DB.csv לפי ID. בקבוצה 1 הגרף גם מעל השאלות; בקבוצה 2 הגרף רק לפני השאלות; בקבוצה 3 בשלב ההצגה בלבד.
 # * ללא שימוש בתמונות; ImageFileName אינו נדרש עוד.
-# * הוספת טיימר עליון וברענון עדין למניעת שגיאות 400.
+# * טיימר עליון ורענון עדין למניעת שגיאות 400.

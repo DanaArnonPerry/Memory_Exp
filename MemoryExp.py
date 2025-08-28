@@ -1,4 +1,4 @@
-import streamlit as st 
+import streamlit as st
 import pandas as pd
 import os
 import random
@@ -28,6 +28,13 @@ st.markdown("""
 <style>
   body {direction: rtl; text-align: right;}
   .rtl {direction: rtl; text-align: right;}
+  /* תצוגת טיימר + פס התקדמות + כותרת */
+  .timer-pill{
+    display:inline-block; padding:6px 14px; background:#111; color:#fff;
+    border-radius:18px; font-weight:700; font-size:16px;
+  }
+  .progress-label{ text-align:right; direction:rtl; font-size:14px; margin:6px 0 4px; }
+  .title-above-chart{ text-align:center; direction:rtl; margin:10px 0 6px; font-size:26px; font-weight:800; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,8 +43,8 @@ st.markdown("""
 ###############################################
 
 def show_rtl_text(text, tag="p", size="18px"):
-    st.markdown(f"<{tag} style='direction: rtl; text-align: right; font-size:{size};'>{text}</{tag}>", unsafe_allow_html=True)
-
+    st.markdown(f"<{tag} style='direction: rtl; text-align: right; font-size:{size};'>{text}</{tag}>",
+                unsafe_allow_html=True)
 
 def show_group_badge():
     st.markdown(
@@ -46,15 +53,27 @@ def show_group_badge():
         unsafe_allow_html=True
     )
 
+def _fmt_mmss(sec:int)->str:
+    sec = max(0, int(sec));  m = sec // 60; s = sec % 60
+    return f"{m}:{s:02d}"
 
-def show_timer_badge(seconds: int):
-    st.markdown(
-        f"<div style='direction:rtl;text-align:right;padding:8px 12px;border-radius:10px;display:inline-block;background:#EEF2FF;border:1px solid #CBD5E1;margin:6px 0;'>"
-        f"⏱️ זמן שנותר: <b>{seconds}</b> שניות"
-        f"</div>",
-        unsafe_allow_html=True
-    )
+def render_header(seconds_left:int, idx:int, total:int, label:str="זמן שנותר"):
+    """מציג טיימר 'כדור', אחריו פס התקדמות וטקסט 'גרף X מתוך N'."""
+    # כדור טיימר ממורכז
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.markdown(f"<div class='timer-pill'>{label}: {_fmt_mmss(seconds_left)} ⏳</div>", unsafe_allow_html=True)
+    # פס התקדמות + טקסט
+    st.markdown(f"<div class='progress-label'>גרף {idx} מתוך {total}</div>", unsafe_allow_html=True)
+    # הגנה מחלוקה באפס (לא אמור לקרות כי יש תמיד לפחות גרף אחד)
+    prog = 0.0 if total <= 0 else idx / total
+    st.progress(min(max(prog, 0.0), 1.0))
 
+def render_chart_title(row: pd.Series):
+    """מציג כותרת מעל הגרף מהעמודה Title אם קיימת."""
+    t = str(row.get("Title", "")).strip()
+    if t:
+        st.markdown(f"<div class='title-above-chart'>{t}</div>", unsafe_allow_html=True)
 
 def tick_and_rerun(delay: float = 1.0):
     time.sleep(max(0.2, float(delay)))
@@ -69,7 +88,7 @@ def load_memory_test():
     try:
         df = pd.read_csv("MemoryTest.csv", encoding='utf-8-sig')
         df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-        # עמודות חובה מינימליות (ללא תמונות)
+        # עמודות חובה מינימליות (Title אופציונלית)
         required_cols = [
             'ChartNumber','Condition','TheContext',
             'Question1Text','Q1OptionA','Q1OptionB','Q1OptionC','Q1OptionD',
@@ -112,7 +131,6 @@ def load_graph_db():
         st.error(f"שגיאה בטעינת הקובץ graph_DB.csv: {e}")
         return pd.DataFrame()
 
-
 def current_graph_id(row_dict):
     for key in ("GraphID","ChartID","ID","ChartNumber"):
         val = row_dict.get(key)
@@ -123,7 +141,6 @@ def current_graph_id(row_dict):
                 pass
     return None
 
-
 def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
     if graph_db.empty or graph_id is None:
         return pd.DataFrame()
@@ -131,7 +148,6 @@ def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
         return pd.DataFrame()
     sub = graph_db[graph_db['ID'] == graph_id].copy()
     return sub
-
 
 def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 380):
     """ציור גרף עמודות מתוך ה-DB עם שליטה בשמות הסדרות, צבעים וטקסט מעל עמודות.
@@ -283,6 +299,8 @@ if "filtered_df" not in st.session_state:
         st.error(f"אין נתונים בתנאי {st.session_state.variation}. אנא בדוק את קובץ ה-CSV.")
         st.stop()
 
+TOTAL_GRAPHS = len(st.session_state.filtered_df)
+
 ###############################################
 # פרמטרים לניסוי
 ###############################################
@@ -299,11 +317,12 @@ if "group" not in st.session_state:
     except Exception:
         qp = st.experimental_get_query_params()
         group_param = qp.get("group", [None])[0]
-    st.session_state.group = group_param if group_param in ("G1","G2","G3") else random.choice(["G1","G2","G3"])  
+    st.session_state.group = group_param if group_param in ("G1","G2","G3") else random.choice(["G1","G2","G3"])
 
 # בורר לקבוצה במצב פיתוח
 if is_dev_mode:
-    new_group = st.sidebar.selectbox("בחר קבוצה (תנאי)", ["G1","G2","G3"], index=["G1","G2","G3"].index(st.session_state.group))
+    new_group = st.sidebar.selectbox("בחר קבוצה (תנאי)", ["G1","G2","G3"],
+                                     index=["G1","G2","G3"].index(st.session_state.group))
     if new_group != st.session_state.group and st.sidebar.button("החל קבוצה"):
         st.session_state.group = new_group
         st.session_state.stage = "welcome"
@@ -354,8 +373,9 @@ def log_event(action, extra=None):
 # ווידג'טים מסייעים
 ###############################################
 if is_dev_mode:
-    st.sidebar.markdown(f"### גרף נוכחי: {st.session_state.graph_index+1}/{len(st.session_state.filtered_df)}")
-    jump_idx = st.sidebar.number_input("דלג לגרף #", min_value=1, max_value=len(st.session_state.filtered_df), value=st.session_state.graph_index+1)
+    st.sidebar.markdown(f"### גרף נוכחי: {st.session_state.graph_index+1}/{TOTAL_GRAPHS}")
+    jump_idx = st.sidebar.number_input("דלג לגרף #", min_value=1, max_value=TOTAL_GRAPHS,
+                                       value=st.session_state.graph_index+1)
     if st.sidebar.button("דלג"):
         st.session_state.graph_index = jump_idx - 1
         st.session_state.stage = "context" if st.session_state.group in ["G1","G2"] else "g3_show"
@@ -366,7 +386,7 @@ if is_dev_mode:
 ###############################################
 
 def save_and_advance_graph():
-    if st.session_state.graph_index + 1 >= len(st.session_state.filtered_df):
+    if st.session_state.graph_index + 1 >= TOTAL_GRAPHS:
         if st.session_state.group == "G3" and st.session_state.phase == "show":
             st.session_state.phase = "questions"
             st.session_state.stage = "g3_questions"
@@ -377,7 +397,6 @@ def save_and_advance_graph():
     else:
         st.session_state.graph_index += 1
         st.session_state.stage = "context" if st.session_state.group in ("G1","G2") else "g3_show"
-
 
 def record_answer(row, qn, answer, confidence, rt):
     payload = {
@@ -406,7 +425,7 @@ if st.session_state.stage == "welcome":
     if st.session_state.group == "G1":
         show_rtl_text("בתנאי זה יוצג תחילה הקשר, לאחר מכן גרף ל-5 שניות, ואז שתי שאלות (כל אחת עד 2 דקות) עם הגרף מעל השאלה.")
     elif st.session_state.group == "G2":
-        show_rtl_text("בתנאי זה יוצג הקשר, יוצג הגרף ל‑5 שניות, ואז שלוש שאלות ללא הצגת הגרף.")
+        show_rtl_text("בתנאי זה יוצג הקשר, יוצג הגרף ל-5 שניות, ואז שלוש שאלות ללא הצגת הגרף.")
     else:
         show_rtl_text("בתנאי זה כל הגרפים יוצגו ל-5 שניות כל אחד עם שאלת הערכת זכירה; בסוף תענו על כל 36 השאלות ללא הצגת הגרפים.")
 
@@ -441,8 +460,9 @@ elif st.session_state.group == "G1":
         show_group_badge()
         elapsed = time.time() - st.session_state.display_start_time
         remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
-        show_timer_badge(remaining)
-        draw_bar_chart(sub, title=f"גרף {row['ChartNumber']}")
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
+        render_chart_title(row)
+        draw_bar_chart(sub)  # בלי title פנימי – הכותרת מעל הגרף
         if elapsed >= DISPLAY_TIME_GRAPH:
             st.session_state.stage = "q1"
             st.session_state.q_start_time = time.time()
@@ -457,7 +477,8 @@ elif st.session_state.group == "G1":
         opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
         elapsed = time.time() - (st.session_state.q_start_time or time.time())
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
-        show_timer_badge(remaining)
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
+        render_chart_title(row)
         # הגרף מעל השאלה
         draw_bar_chart(sub)
         with st.form(key=f"g1_q{qn}_{row['ChartNumber']}"):
@@ -502,8 +523,9 @@ elif st.session_state.group == "G2":
         show_group_badge()
         elapsed = time.time() - st.session_state.display_start_time
         remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
-        show_timer_badge(remaining)
-        draw_bar_chart(sub, title=f"גרף {row['ChartNumber']}")
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
+        render_chart_title(row)
+        draw_bar_chart(sub)
         if elapsed >= DISPLAY_TIME_GRAPH:
             st.session_state.stage = "g2_q"
             st.session_state.q_start_time = time.time()
@@ -518,7 +540,7 @@ elif st.session_state.group == "G2":
         opts = [row[f"Q{qn}OptionA"], row[f"Q{qn}OptionB"], row[f"Q{qn}OptionC"], row[f"Q{qn}OptionD"]]
         elapsed = time.time() - (st.session_state.q_start_time or time.time())
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
-        show_timer_badge(remaining)
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
         with st.form(key=f"g2_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
             show_rtl_text(qtxt)
@@ -551,8 +573,9 @@ elif st.session_state.group == "G3":
         show_group_badge()
         elapsed = 0 if st.session_state.display_start_time is None else time.time() - st.session_state.display_start_time
         remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
-        show_timer_badge(remaining)
-        draw_bar_chart(sub, title=f"גרף {row['ChartNumber']}")
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
+        render_chart_title(row)
+        draw_bar_chart(sub)
         if st.session_state.display_start_time is None:
             st.session_state.display_start_time = time.time()
             log_event("Show Graph (G3)", {"chart": row['ChartNumber'], "graph_id": graph_id})
@@ -594,7 +617,7 @@ elif st.session_state.group == "G3":
             st.session_state.q_start_time = time.time()
         elapsed = time.time() - st.session_state.q_start_time
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
-        show_timer_badge(remaining)
+        render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
         with st.form(key=f"g3_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"שאלות סופיות — גרף {row['ChartNumber']} — שאלה {qn}/3", "h3")
             show_rtl_text(qtxt)
@@ -609,7 +632,7 @@ elif st.session_state.group == "G3":
             st.session_state.question_index += 1
             if st.session_state.question_index >= 3:
                 st.session_state.question_index = 0
-                if st.session_state.graph_index + 1 >= len(st.session_state.filtered_df):
+                if st.session_state.graph_index + 1 >= TOTAL_GRAPHS:
                     st.session_state.stage = "end"
                 else:
                     st.session_state.graph_index += 1
@@ -644,10 +667,3 @@ if st.session_state.stage == "end":
             st.sidebar.success("ברוך/ה הבא/ה, מנהל/ת!")
         elif admin_password:
             st.sidebar.error("סיסמה שגויה")
-
-###############################################
-# הערות:
-# * ברירת מחדל ליצירת גרפים ב-Altair (ללא צורך בהתקנת matplotlib). אם Altair לא זמין — נעשה גיבוי ל-matplotlib ואם גם הוא לא זמין נשתמש ב-st.bar_chart.
-# * שימוש בגרפים מתוך graph_DB.csv לפי ID. בקבוצה 1 הגרף גם מעל השאלות; בקבוצה 2 הגרף רק לפני השאלות; בקבוצה 3 בשלב ההצגה בלבד.
-# * ללא שימוש בתמונות; ImageFileName אינו נדרש עוד.
-# * טיימר עליון ורענון עדין למניעת שגיאות 400.

@@ -133,50 +133,85 @@ def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
     return sub
 
 
-def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 300):
-    """ציור גרף עמודות מתוך ה-DB. ברירת מחדל Altair; גיבוי Matplotlib/Streamlit."""
+def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 380):
+    """ציור גרף עמודות מתוך ה-DB עם שליטה בשמות הסדרות, צבעים וטקסט מעל עמודות.
+    * שמות הסדרות יילקחו מ-`SeriesAName`/`SeriesBName` אם קיימות; אחרת שמות ברירת מחדל.
+    * צבעים יילקחו מ-`ColorA`/`ColorB` אם קיימות; אחרת צבעי ברירת מחדל.
+    * אם קיימות שתי סדרות (ValuesB), יוצג גרף עמודות מקובצות + מקרא.
+    """
     if sub.empty:
         st.warning("לא נמצאו נתונים לגרף המבוקש בקובץ graph_DB.csv")
         return
 
-    # מכינים DataFrame ארוך ל-Altair אם יש שתי סדרות
+    # שמות סדרות וצבעים (ברירת מחדל)
+    name_a = (sub['SeriesAName'].dropna().iloc[0]
+              if 'SeriesAName' in sub.columns and sub['SeriesAName'].notna().any() else 'סדרה A')
+    name_b = (sub['SeriesBName'].dropna().iloc[0]
+              if 'SeriesBName' in sub.columns and sub['SeriesBName'].notna().any() else 'סדרה B')
+
+    col_a = (sub['ColorA'].dropna().iloc[0]
+             if 'ColorA' in sub.columns and sub['ColorA'].notna().any() else '#4C78A8')  # כחול
+    col_b = (sub['ColorB'].dropna().iloc[0]
+             if 'ColorB' in sub.columns and sub['ColorB'].notna().any() else '#F58518')  # כתום
+
+    has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
+
     if _HAS_ALT:
-        if 'ValuesB' in sub.columns and sub['ValuesB'].notna().any():
+        if has_b:
             df_long = sub[['Labels','ValuesA','ValuesB']].copy()
-            df_long = df_long.melt(id_vars=['Labels'], value_vars=['ValuesA','ValuesB'], var_name='series', value_name='value')
-            chart = alt.Chart(df_long).mark_bar().encode(
-                x=alt.X('Labels:N', sort=None),
+            df_long = df_long.melt(id_vars=['Labels'], value_vars=['ValuesA','ValuesB'],
+                                   var_name='series', value_name='value')
+            # החלפת שמות הסדרות לערכים ידידותיים
+            df_long['series'] = df_long['series'].replace({'ValuesA': name_a, 'ValuesB': name_b})
+
+            base = alt.Chart(df_long).encode(
+                x=alt.X('Labels:N', sort=None, axis=alt.Axis(labelAngle=0, labelPadding=6)),
+                y=alt.Y('value:Q', axis=alt.Axis(grid=True, tickCount=6)),
+                color=alt.Color('series:N',
+                                scale=alt.Scale(domain=[name_a, name_b], range=[col_a, col_b]),
+                                legend=alt.Legend(orient='top-right', title=None)),
                 xOffset='series:N',
-                y=alt.Y('value:Q'),
-                color=alt.Color('series:N', legend=None),
-                tooltip=['Labels','series','value']
+                tooltip=['Labels', 'series', alt.Tooltip('value:Q', format='.0f')]
             )
+            bars = base.mark_bar()
+            labels = base.mark_text(dy=-6).encode(text=alt.Text('value:Q', format='.0f'))
+            chart = bars + labels
         else:
-            chart = alt.Chart(sub[['Labels','ValuesA']]).mark_bar().encode(
-                x=alt.X('Labels:N', sort=None),
-                y=alt.Y('ValuesA:Q'),
-                tooltip=['Labels','ValuesA']
+            base = alt.Chart(sub[['Labels','ValuesA']]).encode(
+                x=alt.X('Labels:N', sort=None, axis=alt.Axis(labelAngle=0, labelPadding=6)),
+                y=alt.Y('ValuesA:Q', axis=alt.Axis(grid=True, tickCount=6)),
+                tooltip=['Labels', alt.Tooltip('ValuesA:Q', format='.0f')]
             )
+            bars = base.mark_bar(color=col_a)
+            labels = alt.Chart(sub[['Labels','ValuesA']]).mark_text(dy=-6).encode(
+                x='Labels:N', y='ValuesA:Q', text=alt.Text('ValuesA:Q', format='.0f')
+            )
+            chart = bars + labels
+
         if title:
             chart = chart.properties(title=title)
+        chart = chart.properties(height=height)
         st.altair_chart(chart, use_container_width=True)
         return
 
     # גיבוי: Matplotlib אם קיים
     if _HAS_MPL:
         labels = sub['Labels'].astype(str).tolist() if 'Labels' in sub.columns else [str(i) for i in range(len(sub))]
-        has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
         vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
-        vals_b = sub['ValuesB'].fillna(0).tolist() if has_b else None
-        n = len(labels)
-        x = range(n)
-        width = 0.38 if has_b else 0.55
-        fig, ax = plt.subplots(figsize=(min(14, max(8, n*0.8)), height/96))
+        x = range(len(labels))
         if has_b:
-            ax.bar([i - width/2 for i in x], vals_a, width)
-            ax.bar([i + width/2 for i in x], vals_b, width)
+            vals_b = sub['ValuesB'].fillna(0).tolist()
+            width = 0.38
         else:
-            ax.bar(x, vals_a, width)
+            vals_b = None
+            width = 0.55
+        fig, ax = plt.subplots(figsize=(min(14, max(8, len(labels)*0.8)), height/96))
+        if has_b:
+            ax.bar([i - width/2 for i in x], vals_a, width, label=name_a, color=col_a)
+            ax.bar([i + width/2 for i in x], vals_b, width, label=name_b, color=col_b)
+            ax.legend(loc='upper right', frameon=False)
+        else:
+            ax.bar(x, vals_a, width, color=col_a)
         ax.set_xticks(list(x))
         ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
         ax.spines['top'].set_visible(False)
@@ -184,16 +219,26 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 30
         ax.grid(axis='y', linestyle='--', alpha=0.25)
         if title:
             ax.set_title(title, fontsize=14, pad=12)
+        # טקסט על העמודות
+        def _annot(xs, ys):
+            for xi, yi in zip(xs, ys):
+                ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=10)
+        if has_b:
+            _annot([i - width/2 for i in x], vals_a)
+            _annot([i + width/2 for i in x], vals_b)
+        else:
+            _annot(list(x), vals_a)
         st.pyplot(fig, clear_figure=True)
         return
 
     # גיבוי אחרון: st.bar_chart
-    if 'ValuesB' in sub.columns and sub['ValuesB'].notna().any():
-        data = sub[['Labels','ValuesA','ValuesB']].set_index('Labels')
+    if has_b:
+        data = sub[['Labels','ValuesA','ValuesB']].copy()
+        data.rename(columns={'ValuesA': name_a, 'ValuesB': name_b}, inplace=True)
     else:
-        data = sub[['Labels','ValuesA']].set_index('Labels')
-    st.bar_chart(data)
-
+        data = sub[['Labels','ValuesA']].copy()
+        data.rename(columns={'ValuesA': name_a}, inplace=True)
+    st.bar_chart(data.set_index('Labels'))
 
 ###############################################
 # טעינה

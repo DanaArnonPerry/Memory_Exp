@@ -24,10 +24,24 @@ except Exception:
 # הגדרות בסיס
 ###############################################
 st.set_page_config(layout="wide", page_title="ניסוי זיכרון חזותי — גרסה 2")
+
+# האם להציג את תגית הקבוצה? (מוסתר לפי הדרישה)
+SHOW_GROUP_BADGE = False
+
 st.markdown("""
 <style>
   body {direction: rtl; text-align: right;}
   .rtl {direction: rtl; text-align: right;}
+
+  /* הסתרת סרגל/תפריט/אייקונים עליונים של Streamlit */
+  [data-testid="stToolbar"] {display:none !important;}
+  [data-testid="stDecoration"] {display:none !important;}
+  [data-testid="stStatusWidget"] {display:none !important;}
+  .stAppDeployButton {display:none !important;}
+  header {visibility:hidden !important;}
+  #MainMenu {visibility:hidden !important;}
+  footer {visibility:hidden !important;}
+
   /* תצוגת טיימר + פס התקדמות + כותרת */
   .timer-pill{
     display:inline-block; padding:6px 14px; background:#111; color:#fff;
@@ -47,6 +61,9 @@ def show_rtl_text(text, tag="p", size="18px"):
                 unsafe_allow_html=True)
 
 def show_group_badge():
+    # מוסתר לפי הדרישה — שומר על חתימת הפונקציה כדי לא לשנות את שאר הקוד
+    if not SHOW_GROUP_BADGE:
+        return
     st.markdown(
         f"<div style='direction:rtl;text-align:right;padding:6px 10px;border-radius:12px;display:inline-block;background:#F1F5F9;border:1px solid #E2E8F0;margin-bottom:8px;'>"
         f"קבוצה: <b>{st.session_state.get('group','?')}</b></div>",
@@ -59,13 +76,10 @@ def _fmt_mmss(sec:int)->str:
 
 def render_header(seconds_left:int, idx:int, total:int, label:str="זמן שנותר"):
     """מציג טיימר 'כדור', אחריו פס התקדמות וטקסט 'גרף X מתוך N'."""
-    # כדור טיימר ממורכז
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.markdown(f"<div class='timer-pill'>{label}: {_fmt_mmss(seconds_left)} ⏳</div>", unsafe_allow_html=True)
-    # פס התקדמות + טקסט
     st.markdown(f"<div class='progress-label'>גרף {idx} מתוך {total}</div>", unsafe_allow_html=True)
-    # הגנה מחלוקה באפס (לא אמור לקרות כי יש תמיד לפחות גרף אחד)
     prog = 0.0 if total <= 0 else idx / total
     st.progress(min(max(prog, 0.0), 1.0))
 
@@ -88,7 +102,6 @@ def load_memory_test():
     try:
         df = pd.read_csv("MemoryTest.csv", encoding='utf-8-sig')
         df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-        # עמודות חובה מינימליות (Title אופציונלית)
         required_cols = [
             'ChartNumber','Condition','TheContext',
             'Question1Text','Q1OptionA','Q1OptionB','Q1OptionC','Q1OptionD',
@@ -113,7 +126,6 @@ def load_graph_db():
     try:
         db = pd.read_csv("graph_DB.csv", encoding='utf-8-sig')
         db = db.loc[:, ~db.columns.str.contains('^Unnamed')]
-        # ניקוי מספרים (מסיר פסיקים ואחוזים)
         def _to_num(x):
             try:
                 if pd.isna(x):
@@ -146,21 +158,13 @@ def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
         return pd.DataFrame()
     if 'ID' not in graph_db.columns:
         return pd.DataFrame()
-    sub = graph_db[graph_db['ID'] == graph_id].copy()
-    return sub
+    return graph_db[graph_db['ID'] == graph_id].copy()
 
 def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 380):
-    """ציור גרף עמודות מתוך ה-DB עם שליטה בשמות הסדרות, צבעים וטקסט מעל עמודות.
-    * שמות הסדרות יילקחו מ-`SeriesAName`/`SeriesBName` (וכן גרסאות לאותיות קטנות `SeriesnameA`/`SeriesnameB`) אם קיימות; אחרת שמות ברירת מחדל.
-    * צבעים יילקחו מ-`ColorA`/`ColorB` אם קיימות; אחרת צבעי ברירת מחדל.
-    * אם קיימות שתי סדרות (ValuesB), יוצג גרף עמודות מקובצות + מקרא.
-    * כותרות הצירים מוסרות (אין "Labels"/"value").
-    """
     if sub.empty:
         st.warning("לא נמצאו נתונים לגרף המבוקש בקובץ graph_DB.csv")
         return
 
-    # --- שמות סדרות ---
     def _pick(col_main: str, col_alt: str, default: str):
         if col_main in sub.columns and sub[col_main].notna().any():
             return str(sub[col_main].dropna().iloc[0])
@@ -171,7 +175,6 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
     name_a = _pick('SeriesAName', 'SeriesnameA', 'סדרה A')
     name_b = _pick('SeriesBName', 'SeriesnameB', 'סדרה B')
 
-    # --- צבעים ---
     col_a = (sub['ColorA'].dropna().iloc[0]
              if 'ColorA' in sub.columns and sub['ColorA'].notna().any() else '#4C78A8')
     col_b = (sub['ColorB'].dropna().iloc[0]
@@ -179,16 +182,14 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
 
     has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
 
-    # ================= Altair (ברירת מחדל) =================
     if _HAS_ALT:
-        x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None)  # ללא כותרת X
-        y_axis = alt.Axis(grid=True, tickCount=6, title=None)        # ללא כותרת Y
+        x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None)
+        y_axis = alt.Axis(grid=True, tickCount=6, title=None)
 
         if has_b:
             df_long = sub[['Labels','ValuesA','ValuesB']].copy()
             df_long = df_long.melt(id_vars=['Labels'], value_vars=['ValuesA','ValuesB'],
                                    var_name='series', value_name='value')
-            # ממפים לשמות הסדרות מהקובץ
             df_long['series_name'] = df_long['series'].map({'ValuesA': name_a, 'ValuesB': name_b})
 
             base = alt.Chart(df_long).encode(
@@ -221,7 +222,6 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
         st.altair_chart(chart, use_container_width=True)
         return
 
-    # ================= Matplotlib (גיבוי) =================
     if _HAS_MPL:
         labels = sub['Labels'].astype(str).tolist() if 'Labels' in sub.columns else [str(i) for i in range(len(sub))]
         vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
@@ -241,8 +241,8 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
             ax.bar(x, vals_a, width, color=col_a)
         ax.set_xticks(list(x))
         ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
-        ax.set_xlabel('')  # אין כותרת X
-        ax.set_ylabel('')  # אין כותרת Y
+        ax.set_xlabel('')
+        ax.set_ylabel('')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.grid(axis='y', linestyle='--', alpha=0.25)
@@ -259,7 +259,6 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
         st.pyplot(fig, clear_figure=True)
         return
 
-    # ================= st.bar_chart (גיבוי אחרון) =================
     if has_b:
         data = sub[['Labels','ValuesA','ValuesB']].copy()
         data.rename(columns={'ValuesA': name_a, 'ValuesB': name_b}, inplace=True)
@@ -272,12 +271,10 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
 # טעינה
 ###############################################
 
-# מצב פיתוח
 is_dev_mode = st.sidebar.checkbox("מצב פיתוח", key="dev_mode", value=False)
-# כפתור רענון נתונים (ניקוי cache)
 if is_dev_mode and st.sidebar.button("רענון נתונים (ניקוי קאש)"):
-    st.cache_data.clear()   # מנקה את כל ה-cache של @st.cache_data
-    st.rerun()              # מפעיל את האפליקציה מחדש כדי לטעון את הקבצים שוב
+    st.cache_data.clear()
+    st.rerun()
 
 df = load_memory_test()
 if df.empty:
@@ -319,7 +316,6 @@ if "group" not in st.session_state:
         group_param = qp.get("group", [None])[0]
     st.session_state.group = group_param if group_param in ("G1","G2","G3") else random.choice(["G1","G2","G3"])
 
-# בורר לקבוצה במצב פיתוח
 if is_dev_mode:
     new_group = st.sidebar.selectbox("בחר קבוצה (תנאי)", ["G1","G2","G3"],
                                      index=["G1","G2","G3"].index(st.session_state.group))
@@ -355,7 +351,6 @@ if "q_start_time" not in st.session_state:
 ###############################################
 # לוג
 ###############################################
-
 def log_event(action, extra=None):
     if "log" not in st.session_state:
         st.session_state.log = []
@@ -384,7 +379,6 @@ if is_dev_mode:
 ###############################################
 # פונקציות זרימה
 ###############################################
-
 def save_and_advance_graph():
     if st.session_state.graph_index + 1 >= TOTAL_GRAPHS:
         if st.session_state.group == "G3" and st.session_state.phase == "show":
@@ -420,7 +414,7 @@ def record_answer(row, qn, answer, confidence, rt):
 # מסך פתיחה
 ###############################################
 if st.session_state.stage == "welcome":
-    show_group_badge()
+    show_group_badge()  # לא יציג בפועל (מוסתר)
     show_rtl_text("שלום וברוכ/ה הבא/ה לניסוי בזיכרון חזותי!", "h2")
     if st.session_state.group == "G1":
         show_rtl_text("בתנאי זה יוצג תחילה הקשר, לאחר מכן גרף ל-5 שניות, ואז שתי שאלות (כל אחת עד 2 דקות) עם הגרף מעל השאלה.")
@@ -462,7 +456,7 @@ elif st.session_state.group == "G1":
         remaining = max(0, int(DISPLAY_TIME_GRAPH - elapsed))
         render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן תצוגה נותר")
         render_chart_title(row)
-        draw_bar_chart(sub)  # בלי title פנימי – הכותרת מעל הגרף
+        draw_bar_chart(sub)
         if elapsed >= DISPLAY_TIME_GRAPH:
             st.session_state.stage = "q1"
             st.session_state.q_start_time = time.time()
@@ -479,7 +473,6 @@ elif st.session_state.group == "G1":
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
         render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
         render_chart_title(row)
-        # הגרף מעל השאלה
         draw_bar_chart(sub)
         with st.form(key=f"g1_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
@@ -489,7 +482,7 @@ elif st.session_state.group == "G1":
             submitted = st.form_submit_button("המשך")
         if submitted or elapsed >= QUESTION_MAX_TIME:
             rt = round(elapsed, 2)
-            record_answer(row, qn, answer, None, rt)  # ללא שאלת ביטחון בקבוצה 1
+            record_answer(row, qn, answer, None, rt)
             log_event(f"Answer Q{qn}", {"chart": row['ChartNumber'], "rt": rt})
             if st.session_state.stage == "q1":
                 st.session_state.stage = "q2"
@@ -501,7 +494,7 @@ elif st.session_state.group == "G1":
             tick_and_rerun(1.0)
 
 ###############################################
-# G2 — הקשר > גרף (מ-db, 5ש') > Q1..Q3 (ללא הגרף)
+# G2 — הקשר > גרף (מ-db, 5ש') > Q1..Q3 (ללא הגרף בשאלות)
 ###############################################
 elif st.session_state.group == "G2":
     row = st.session_state.filtered_df.iloc[st.session_state.graph_index]
@@ -541,6 +534,7 @@ elif st.session_state.group == "G2":
         elapsed = time.time() - (st.session_state.q_start_time or time.time())
         remaining = max(0, int(QUESTION_MAX_TIME - elapsed))
         render_header(remaining, st.session_state.graph_index + 1, TOTAL_GRAPHS, "זמן לשאלה")
+        # *** אין גרף כאן — רק טופס השאלה ***
         with st.form(key=f"g2_q{qn}_{row['ChartNumber']}"):
             show_rtl_text(f"גרף {row['ChartNumber']} — שאלה {qn}", "h3")
             show_rtl_text(qtxt)
@@ -549,7 +543,7 @@ elif st.session_state.group == "G2":
             submitted = st.form_submit_button("המשך")
         if submitted or elapsed >= QUESTION_MAX_TIME:
             rt = round(elapsed, 2)
-            record_answer(row, qn, answer, None, rt)  # אין שאלת ביטחון בקבוצה 2
+            record_answer(row, qn, answer, None, rt)
             log_event(f"Answer Q{qn} (G2)", {"chart": row['ChartNumber'], "rt": rt})
             st.session_state.question_index += 1
             if st.session_state.question_index >= 3:
@@ -659,7 +653,7 @@ if st.session_state.stage == "end":
     df_log.to_csv(f"{results_dir}/log_{timestamp}.csv", index=False)
     st.success("הקבצים נשמרו לתיקייה experiment_results.")
 
-    if st.sidebar.checkbox("הצג כפתורי הורדה (למנהל מערכת בלבד)", key="admin_download", value=False):
+    if is_dev_mode and st.sidebar.checkbox("הצג כפתורי הורדה (למנהל מערכת בלבד)", key="admin_download", value=False):
         admin_password = st.sidebar.text_input("סיסמת מנהל:", type="password", key="admin_pw")
         if admin_password == "admin123":
             st.sidebar.download_button("הורד תוצאות (CSV)", df_out.to_csv(index=False), "results.csv", "text/csv")

@@ -135,51 +135,62 @@ def get_graph_slice(graph_db: pd.DataFrame, graph_id: int):
 
 def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 380):
     """ציור גרף עמודות מתוך ה-DB עם שליטה בשמות הסדרות, צבעים וטקסט מעל עמודות.
-    * שמות הסדרות יילקחו מ-`SeriesAName`/`SeriesBName` אם קיימות; אחרת שמות ברירת מחדל.
+    * שמות הסדרות יילקחו מ-`SeriesAName`/`SeriesBName` (וכן גרסאות לאותיות קטנות `SeriesnameA`/`SeriesnameB`) אם קיימות; אחרת שמות ברירת מחדל.
     * צבעים יילקחו מ-`ColorA`/`ColorB` אם קיימות; אחרת צבעי ברירת מחדל.
     * אם קיימות שתי סדרות (ValuesB), יוצג גרף עמודות מקובצות + מקרא.
+    * כותרות הצירים מוסרות (אין "Labels"/"value").
     """
     if sub.empty:
         st.warning("לא נמצאו נתונים לגרף המבוקש בקובץ graph_DB.csv")
         return
 
-    # שמות סדרות וצבעים (ברירת מחדל)
-    name_a = (sub['SeriesAName'].dropna().iloc[0]
-              if 'SeriesAName' in sub.columns and sub['SeriesAName'].notna().any() else 'סדרה A')
-    name_b = (sub['SeriesBName'].dropna().iloc[0]
-              if 'SeriesBName' in sub.columns and sub['SeriesBName'].notna().any() else 'סדרה B')
+    # --- שמות סדרות ---
+    def _pick(col_main: str, col_alt: str, default: str):
+        if col_main in sub.columns and sub[col_main].notna().any():
+            return str(sub[col_main].dropna().iloc[0])
+        if col_alt in sub.columns and sub[col_alt].notna().any():
+            return str(sub[col_alt].dropna().iloc[0])
+        return default
 
+    name_a = _pick('SeriesAName', 'SeriesnameA', 'סדרה A')
+    name_b = _pick('SeriesBName', 'SeriesnameB', 'סדרה B')
+
+    # --- צבעים ---
     col_a = (sub['ColorA'].dropna().iloc[0]
-             if 'ColorA' in sub.columns and sub['ColorA'].notna().any() else '#4C78A8')  # כחול
+             if 'ColorA' in sub.columns and sub['ColorA'].notna().any() else '#4C78A8')
     col_b = (sub['ColorB'].dropna().iloc[0]
-             if 'ColorB' in sub.columns and sub['ColorB'].notna().any() else '#F58518')  # כתום
+             if 'ColorB' in sub.columns and sub['ColorB'].notna().any() else '#F58518')
 
     has_b = 'ValuesB' in sub.columns and sub['ValuesB'].notna().any()
 
+    # ================= Altair (ברירת מחדל) =================
     if _HAS_ALT:
+        x_axis = alt.Axis(labelAngle=0, labelPadding=6, title=None)  # ללא כותרת X
+        y_axis = alt.Axis(grid=True, tickCount=6, title=None)        # ללא כותרת Y
+
         if has_b:
             df_long = sub[['Labels','ValuesA','ValuesB']].copy()
             df_long = df_long.melt(id_vars=['Labels'], value_vars=['ValuesA','ValuesB'],
                                    var_name='series', value_name='value')
-            # החלפת שמות הסדרות לערכים ידידותיים
-            df_long['series'] = df_long['series'].replace({'ValuesA': name_a, 'ValuesB': name_b})
+            # ממפים לשמות הסדרות מהקובץ
+            df_long['series_name'] = df_long['series'].map({'ValuesA': name_a, 'ValuesB': name_b})
 
             base = alt.Chart(df_long).encode(
-                x=alt.X('Labels:N', sort=None, axis=alt.Axis(labelAngle=0, labelPadding=6)),
-                y=alt.Y('value:Q', axis=alt.Axis(grid=True, tickCount=6)),
-                color=alt.Color('series:N',
+                x=alt.X('Labels:N', sort=None, axis=x_axis),
+                y=alt.Y('value:Q', axis=y_axis),
+                color=alt.Color('series_name:N',
                                 scale=alt.Scale(domain=[name_a, name_b], range=[col_a, col_b]),
                                 legend=alt.Legend(orient='top-right', title=None)),
-                xOffset='series:N',
-                tooltip=['Labels', 'series', alt.Tooltip('value:Q', format='.0f')]
+                xOffset='series_name:N',
+                tooltip=['Labels', 'series_name', alt.Tooltip('value:Q', format='.0f')]
             )
             bars = base.mark_bar()
             labels = base.mark_text(dy=-6).encode(text=alt.Text('value:Q', format='.0f'))
             chart = bars + labels
         else:
             base = alt.Chart(sub[['Labels','ValuesA']]).encode(
-                x=alt.X('Labels:N', sort=None, axis=alt.Axis(labelAngle=0, labelPadding=6)),
-                y=alt.Y('ValuesA:Q', axis=alt.Axis(grid=True, tickCount=6)),
+                x=alt.X('Labels:N', sort=None, axis=x_axis),
+                y=alt.Y('ValuesA:Q', axis=y_axis),
                 tooltip=['Labels', alt.Tooltip('ValuesA:Q', format='.0f')]
             )
             bars = base.mark_bar(color=col_a)
@@ -194,7 +205,7 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
         st.altair_chart(chart, use_container_width=True)
         return
 
-    # גיבוי: Matplotlib אם קיים
+    # ================= Matplotlib (גיבוי) =================
     if _HAS_MPL:
         labels = sub['Labels'].astype(str).tolist() if 'Labels' in sub.columns else [str(i) for i in range(len(sub))]
         vals_a = sub['ValuesA'].fillna(0).tolist() if 'ValuesA' in sub.columns else [0]*len(labels)
@@ -214,12 +225,13 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
             ax.bar(x, vals_a, width, color=col_a)
         ax.set_xticks(list(x))
         ax.set_xticklabels(labels, rotation=0, ha='center', fontsize=11)
+        ax.set_xlabel('')  # אין כותרת X
+        ax.set_ylabel('')  # אין כותרת Y
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.grid(axis='y', linestyle='--', alpha=0.25)
         if title:
             ax.set_title(title, fontsize=14, pad=12)
-        # טקסט על העמודות
         def _annot(xs, ys):
             for xi, yi in zip(xs, ys):
                 ax.text(xi, yi, f"{yi:.0f}", ha='center', va='bottom', fontsize=10)
@@ -231,7 +243,7 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
         st.pyplot(fig, clear_figure=True)
         return
 
-    # גיבוי אחרון: st.bar_chart
+    # ================= st.bar_chart (גיבוי אחרון) =================
     if has_b:
         data = sub[['Labels','ValuesA','ValuesB']].copy()
         data.rename(columns={'ValuesA': name_a, 'ValuesB': name_b}, inplace=True)

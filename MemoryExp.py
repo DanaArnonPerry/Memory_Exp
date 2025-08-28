@@ -258,6 +258,10 @@ def draw_bar_chart(sub: pd.DataFrame, title: str | None = None, height: int = 38
 
 # מצב פיתוח
 is_dev_mode = st.sidebar.checkbox("מצב פיתוח", key="dev_mode", value=False)
+# כפתור רענון נתונים (ניקוי cache)
+if is_dev_mode and st.sidebar.button("רענון נתונים (ניקוי קאש)"):
+    st.cache_data.clear()   # מנקה את כל ה-cache של @st.cache_data
+    st.rerun()              # מפעיל את האפליקציה מחדש כדי לטעון את הקבצים שוב
 
 df = load_memory_test()
 if df.empty:
